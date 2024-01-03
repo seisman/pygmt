@@ -1,10 +1,10 @@
 """
 Define the Figure class that handles all plotting.
 """
-from pathlib import Path
-from tempfile import TemporaryDirectory
 import base64
 import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 try:
     import IPython
