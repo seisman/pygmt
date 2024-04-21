@@ -15,7 +15,6 @@ jobs:
   upload-baseline:
     name: Upload baseline images
     runs-on: ubuntu-latest
-    if: github.repository == 'GenericMappingTools/pygmt'
 
     steps:
     - name: Checkout
