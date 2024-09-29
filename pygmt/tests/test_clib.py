@@ -447,26 +447,6 @@ def test_dataarray_to_matrix_zero_inc_fails():
         dataarray_to_matrix(grid)
 
 
-def test_get_default():
-    """
-    Make sure get_default works without crashing and gives reasonable results.
-    """
-    with clib.Session() as lib:
-        assert lib.get_default("API_GRID_LAYOUT") in {"rows", "columns"}
-        assert int(lib.get_default("API_CORES")) >= 1
-        assert Version(lib.get_default("API_VERSION")) >= Version("6.3.0")
-        assert lib.get_default("PROJ_LENGTH_UNIT") == "cm"
-
-
-def test_get_default_fails():
-    """
-    Make sure get_default raises an exception for invalid names.
-    """
-    with clib.Session() as lib:
-        with pytest.raises(GMTCLibError):
-            lib.get_default("NOT_A_VALID_NAME")
-
-
 def test_info_dict():
     """
     Make sure the clib.Session.info dict is working.

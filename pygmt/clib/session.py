@@ -422,55 +422,6 @@ class Session:
 
         self.session_pointer = None
 
-    def get_default(self, name: str) -> str:
-        """
-        Get the value of a GMT configuration parameter or a GMT API parameter.
-
-        In addition to the long list of GMT configuration parameters, the following API
-        parameter names are also supported:
-
-        * ``"API_VERSION"``: The GMT API version
-        * ``"API_PAD"``: The grid padding setting
-        * ``"API_BINDIR"``: The binary file directory
-        * ``"API_SHAREDIR"``: The share directory
-        * ``"API_DATADIR"``: The data directory
-        * ``"API_PLUGINDIR"``: The plugin directory
-        * ``"API_LIBRARY"``: The core library path
-        * ``"API_CORES"``: The number of cores
-        * ``"API_IMAGE_LAYOUT"``: The image/band layout
-        * ``"API_GRID_LAYOUT"``: The grid layout
-        * ``"API_BIN_VERSION"``: The GMT binary version (with git information)
-
-        Parameters
-        ----------
-        name
-            The name of the GMT configuration parameter (e.g., ``"PROJ_LENGTH_UNIT"``)
-            or a GMT API parameter (e.g., ``"API_VERSION"``).
-
-        Returns
-        -------
-        value
-            The current value for the parameter.
-
-        Raises
-        ------
-        GMTCLibError
-            If the parameter doesn't exist.
-        """
-        c_get_default = self.get_libgmt_func(
-            "GMT_Get_Default",
-            argtypes=[ctp.c_void_p, ctp.c_char_p, ctp.c_char_p],
-            restype=ctp.c_int,
-        )
-
-        # Make a string buffer to get a return value
-        value = ctp.create_string_buffer(4096)
-        status = c_get_default(self.session_pointer, name.encode(), value)
-        if status != 0:
-            msg = f"Error getting value for '{name}' (error code {status})."
-            raise GMTCLibError(msg)
-        return value.value.decode()
-
     def create_data(
         self,
         family,
