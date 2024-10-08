@@ -9,7 +9,9 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 import xarray as xr
-from pygmt import clib
+from packaging.version import Version
+from pygmt import Figure, clib
+from pygmt.clib import required_gmt_version
 from pygmt.clib.conversion import dataarray_to_matrix
 from pygmt.clib.session import FAMILIES, VIAS
 from pygmt.exceptions import (
@@ -18,6 +20,7 @@ from pygmt.exceptions import (
     GMTInvalidInput,
     GMTVersionError,
 )
+from pygmt.helpers import GMTTempFile
 
 POINTS_DATA = Path(__file__).parent / "data" / "points.txt"
 
@@ -124,6 +127,82 @@ def test_destroy_session_fails():
         with pytest.raises(GMTCLibError):
             ses.destroy()
     ses.destroy()
+
+
+@pytest.mark.benchmark
+def test_call_module():
+    """
+    Call a GMT module by passing a list of arguments.
+    """
+    with clib.Session() as lib:
+        with GMTTempFile() as out_fname:
+            lib.call_module("info", [str(POINTS_DATA), "-C", f"->{out_fname.name}"])
+            assert Path(out_fname.name).stat().st_size > 0
+            output = out_fname.read().strip()
+            assert output == "11.5309 61.7074 -2.9289 7.8648 0.1412 0.9338"
+
+
+def test_call_module_argument_string():
+    """
+    Call a GMT module by passing a single argument string.
+    """
+    with clib.Session() as lib:
+        with GMTTempFile() as out_fname:
+            lib.call_module("info", f"{POINTS_DATA} -C ->{out_fname.name}")
+            assert Path(out_fname.name).stat().st_size > 0
+            output = out_fname.read().strip()
+            assert output == "11.5309 61.7074 -2.9289 7.8648 0.1412 0.9338"
+
+
+def test_call_module_empty_argument():
+    """
+    call_module should work if an empty string or an empty list is passed as argument.
+    """
+    Figure()
+    with clib.Session() as lib:
+        lib.call_module("logo", "")
+    with clib.Session() as lib:
+        lib.call_module("logo", [])
+
+
+def test_call_module_invalid_argument_type():
+    """
+    call_module only accepts a string or a list of strings as module arguments.
+    """
+    with clib.Session() as lib:
+        with pytest.raises(GMTInvalidInput):
+            lib.call_module("get", ("FONT_TITLE", "FONT_TAG"))
+
+
+def test_call_module_invalid_arguments():
+    """
+    call_module should fail for invalid module arguments.
+    """
+    with clib.Session() as lib:
+        with pytest.raises(GMTCLibError):
+            lib.call_module("info", ["bogus-data.bla"])
+
+
+def test_call_module_invalid_name():
+    """
+    call_module should fail when an invalid module name is given.
+    """
+    with clib.Session() as lib:
+        with pytest.raises(GMTCLibError):
+            lib.call_module("meh", [])
+
+
+def test_call_module_error_message():
+    """
+    Check if the GMT error message was captured when calling a module.
+    """
+    with clib.Session() as lib:
+        with pytest.raises(GMTCLibError) as exc_info:
+            lib.call_module("info", ["bogus-data.bla"])
+        assert "Module 'info' failed with status code" in exc_info.value.args[0]
+        assert (
+            "gmtinfo [ERROR]: Cannot find file bogus-data.bla" in exc_info.value.args[0]
+        )
 
 
 def test_method_no_session():
@@ -279,6 +358,45 @@ def test_create_data_fails():
                 )
 
 
+def test_extract_region_fails():
+    """
+    Check that extract region fails if nothing has been plotted.
+    """
+    Figure()
+    with pytest.raises(GMTCLibError):
+        with clib.Session() as lib:
+            lib.extract_region()
+
+
+def test_extract_region_two_figures():
+    """
+    Extract region should handle multiple figures existing at the same time.
+    """
+    # Make two figures before calling extract_region to make sure that it's
+    # getting from the current figure, not the last figure.
+    fig1 = Figure()
+    region1 = np.array([0, 10, -20, -10])
+    fig1.coast(region=region1, projection="M6i", frame=True, land="black")
+
+    fig2 = Figure()
+    fig2.basemap(region="US.HI+r5", projection="M6i", frame=True)
+
+    # Activate the first figure and extract the region from it
+    # Use in a different session to avoid any memory problems.
+    with clib.Session() as lib:
+        lib.call_module("figure", [fig1._name, "-"])
+    with clib.Session() as lib:
+        wesn1 = lib.extract_region()
+        npt.assert_allclose(wesn1, region1)
+
+    # Now try it with the second one
+    with clib.Session() as lib:
+        lib.call_module("figure", [fig2._name, "-"])
+    with clib.Session() as lib:
+        wesn2 = lib.extract_region()
+        npt.assert_allclose(wesn2, np.array([-165.0, -150.0, 15.0, 25.0]))
+
+
 def test_write_data_fails():
     """
     Check that write data raises an exception for non-zero return codes.
@@ -405,6 +523,26 @@ def test_dataarray_to_matrix_zero_inc_fails():
     grid = xr.DataArray(data, coords=[("y", y), ("x", x)])
     with pytest.raises(GMTInvalidInput):
         dataarray_to_matrix(grid)
+
+
+def test_get_default():
+    """
+    Make sure get_default works without crashing and gives reasonable results.
+    """
+    with clib.Session() as lib:
+        assert lib.get_default("API_GRID_LAYOUT") in {"rows", "columns"}
+        assert int(lib.get_default("API_CORES")) >= 1
+        assert Version(lib.get_default("API_VERSION")) >= Version(required_gmt_version)
+        assert lib.get_default("PROJ_LENGTH_UNIT") == "cm"
+
+
+def test_get_default_fails():
+    """
+    Make sure get_default raises an exception for invalid names.
+    """
+    with clib.Session() as lib:
+        with pytest.raises(GMTCLibError):
+            lib.get_default("NOT_A_VALID_NAME")
 
 
 def test_info_dict():

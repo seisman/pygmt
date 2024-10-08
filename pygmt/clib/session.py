@@ -11,11 +11,12 @@ import io
 import pathlib
 import sys
 import warnings
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from typing import Literal
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 from pygmt.clib.conversion import (
     array_to_datetime,
     as_c_contiguous,
@@ -237,6 +238,43 @@ class Session:
             GMT_CONSTANTS[name] = self.get_enum(name)
         return GMT_CONSTANTS[name]
 
+    def get_enum(self, name: str) -> int:
+        """
+        Get the value of a GMT constant (C enum) from ``gmt_resources.h``.
+
+        Used to set configuration values for other API calls. Wraps ``GMT_Get_Enum``.
+
+        Parameters
+        ----------
+        name
+            The name of the constant (e.g., ``"GMT_SESSION_EXTERNAL"``).
+
+        Returns
+        -------
+        value
+            Integer value of the constant. Do not rely on this value because it might
+            change.
+
+        Raises
+        ------
+        GMTCLibError
+            If the constant doesn't exist.
+        """
+        c_get_enum = self.get_libgmt_func(
+            "GMT_Get_Enum", argtypes=[ctp.c_void_p, ctp.c_char_p], restype=ctp.c_int
+        )
+
+        # The C library introduced the void API pointer to GMT_Get_Enum so that it's
+        # consistent with other functions. It doesn't use the pointer so we can pass
+        # in None (NULL pointer). We can't give it the actual pointer because we need
+        # to call GMT_Get_Enum when creating a new API session pointer (chicken-and-egg
+        # type of thing).
+        session = None
+        value = c_get_enum(session, name.encode())
+        if value is None or value == -99999:
+            raise GMTCLibError(f"Constant '{name}' doesn't exist in libgmt.")
+        return value
+
     def get_libgmt_func(self, name, argtypes=None, restype=None):
         """
         Get a ctypes function from the libgmt shared library.
@@ -412,6 +450,211 @@ class Session:
             )
 
         self.session_pointer = None
+
+    def get_default(self, name: str) -> str:
+        """
+        Get the value of a GMT configuration parameter or a GMT API parameter.
+
+        In addition to the long list of GMT configuration parameters, the following API
+        parameter names are also supported:
+
+        * ``"API_VERSION"``: The GMT API version
+        * ``"API_PAD"``: The grid padding setting
+        * ``"API_BINDIR"``: The binary file directory
+        * ``"API_SHAREDIR"``: The share directory
+        * ``"API_DATADIR"``: The data directory
+        * ``"API_PLUGINDIR"``: The plugin directory
+        * ``"API_LIBRARY"``: The core library path
+        * ``"API_CORES"``: The number of cores
+        * ``"API_IMAGE_LAYOUT"``: The image/band layout
+        * ``"API_GRID_LAYOUT"``: The grid layout
+        * ``"API_BIN_VERSION"``: The GMT binary version (with git information)
+
+        Parameters
+        ----------
+        name
+            The name of the GMT configuration parameter (e.g., ``"PROJ_LENGTH_UNIT"``)
+            or a GMT API parameter (e.g., ``"API_VERSION"``).
+
+        Returns
+        -------
+        value
+            The current value for the parameter.
+
+        Raises
+        ------
+        GMTCLibError
+            If the parameter doesn't exist.
+        """
+        c_get_default = self.get_libgmt_func(
+            "GMT_Get_Default",
+            argtypes=[ctp.c_void_p, ctp.c_char_p, ctp.c_char_p],
+            restype=ctp.c_int,
+        )
+
+        # Make a string buffer to get a return value
+        value = ctp.create_string_buffer(4096)
+        status = c_get_default(self.session_pointer, name.encode(), value)
+        if status != 0:
+            msg = f"Error getting value for '{name}' (error code {status})."
+            raise GMTCLibError(msg)
+        return value.value.decode()
+
+    def get_common(self, option: str) -> bool | int | float | np.ndarray:
+        """
+        Inquire if a GMT common option has been set and return its current value if
+        possible.
+
+        Parameters
+        ----------
+        option
+            The GMT common option to check. Valid options are ``"B"``, ``"I"``, ``"J"``,
+            ``"R"``, ``"U"``, ``"V"``, ``"X"``, ``"Y"``, ``"a"``, ``"b"``, ``"f"``,
+            ``"g"``, ``"h"``, ``"i"``, ``"n"``, ``"o"``, ``"p"``, ``"r"``, ``"s"``,
+            ``"t"``, and ``":"``.
+
+        Returns
+        -------
+        value
+            Whether the option was set or its value. If the option was not set, return
+            ``False``. Otherwise, the return value depends on the choice of the option.
+
+            - options ``"B"``, ``"J"``, ``"U"``, ``"g"``, ``"n"``, ``"p"``, and ``"s"``:
+              return ``True`` if set, else ``False`` (bool)
+            - ``"I"``: 2-element array for the increments (float)
+            - ``"R"``: 4-element array for the region (float)
+            - ``"V"``: the verbose level (int)
+            - ``"X"``: the xshift (float)
+            - ``"Y"``: the yshift (float)
+            - ``"a"``: geometry of the dataset (int)
+            - ``"b"``: return 0 if ``-bi`` was set and 1 if ``-bo`` was set (int)
+            - ``"f"``: return 0 if ``-fi`` was set and 1 if ``-fo`` was set (int)
+            - ``"h"``: whether to delete existing header records (int)
+            - ``"i"``: number of input columns (int)
+            - ``"o"``: number of output columns (int)
+            - ``"r"``: registration type (int)
+            - ``"t"``: 2-element array for the transparency (float)
+            - ``":"``: return 0 if ``-:i`` was set and 1 if ``-:o`` was set (int)
+
+        Examples
+        --------
+        >>> with Session() as lib:
+        ...     lib.call_module(
+        ...         "basemap", ["-R0/10/10/15", "-JX5i/2.5i", "-Baf", "-Ve"]
+        ...     )
+        ...     region = lib.get_common("R")
+        ...     projection = lib.get_common("J")
+        ...     timestamp = lib.get_common("U")
+        ...     verbose = lib.get_common("V")
+        ...     lib.call_module("plot", ["-T", "-Xw+1i", "-Yh-1i"])
+        ...     xshift = lib.get_common("X")  # xshift/yshift are in inches
+        ...     yshift = lib.get_common("Y")
+        >>> print(region, projection, timestamp, verbose, xshift, yshift)
+        [ 0. 10. 10. 15.] True False 3 6.0 1.5
+        >>> with Session() as lib:
+        ...     lib.call_module("basemap", ["-R0/10/10/15", "-JX5i/2.5i", "-Baf"])
+        ...     lib.get_common("A")
+        Traceback (most recent call last):
+        ...
+        pygmt.exceptions.GMTInvalidInput: Unknown GMT common option flag 'A'.
+        """
+        if option not in "BIJRUVXYabfghinoprst:":
+            raise GMTInvalidInput(f"Unknown GMT common option flag '{option}'.")
+
+        c_get_common = self.get_libgmt_func(
+            "GMT_Get_Common",
+            argtypes=[ctp.c_void_p, ctp.c_uint, ctp.POINTER(ctp.c_double)],
+            restype=ctp.c_int,
+        )
+        value = np.empty(6, np.float64)  # numpy array to store the value of the option
+        status = c_get_common(
+            self.session_pointer,
+            ord(option),
+            value.ctypes.data_as(ctp.POINTER(ctp.c_double)),
+        )
+
+        if status == self["GMT_NOTSET"]:  # GMT_NOTSET (-1) means the option is not set
+            return False
+        if status == 0:  # Option is set and no other value is returned.
+            return True
+
+        # Otherwise, option is set and values are returned.
+        match option:
+            case "I" | "R" | "t":
+                # Option values (in double type) are returned via the 'value' array.
+                # 'status' is number of valid values in the array.
+                return value[:status]
+            case "X" | "Y":  # Only one valid element in the array.
+                return value[0]
+            case _:  # 'status' is the option value (in integer type).
+                return status
+
+    def call_module(self, module: str, args: str | list[str]):
+        """
+        Call a GMT module with the given arguments.
+
+        Wraps ``GMT_Call_Module``.
+
+        The ``GMT_Call_Module`` API function supports passing module arguments in three
+        different ways:
+
+        1. Pass a single string that contains whitespace-separated module arguments.
+        2. Pass a list of strings and each string contains a module argument.
+        3. Pass a list of ``GMT_OPTION`` data structure.
+
+        Both options 1 and 2 are implemented in this function, but option 2 is preferred
+        because it can correctly handle special characters like whitespaces and
+        quotation marks in module arguments.
+
+        Parameters
+        ----------
+        module
+            The GMT module name to be called (``"coast"``, ``"basemap"``, etc).
+        args
+            Module arguments that will be passed to the GMT module. It can be either
+            a single string (e.g., ``"-R0/5/0/10 -JX10c -BWSen+t'My Title'"``) or a list
+            of strings (e.g., ``["-R0/5/0/10", "-JX10c", "-BWSEN+tMy Title"]``).
+
+        Raises
+        ------
+        GMTInvalidInput
+            If the ``args`` argument is not a string or a list of strings.
+        GMTCLibError
+            If the returned status code of the function is non-zero.
+        """
+        c_call_module = self.get_libgmt_func(
+            "GMT_Call_Module",
+            argtypes=[ctp.c_void_p, ctp.c_char_p, ctp.c_int, ctp.c_void_p],
+            restype=ctp.c_int,
+        )
+
+        # 'args' can be (1) a single string or (2) a list of strings.
+        argv: bytes | ctp.Array[ctp.c_char_p] | None
+        if isinstance(args, str):
+            # 'args' is a single string that contains whitespace-separated arguments.
+            # In this way, we need to correctly handle option arguments that contain
+            # whitespaces or quotation marks. It's used in PyGMT <= v0.11.0 but is no
+            # longer recommended.
+            mode = self["GMT_MODULE_CMD"]
+            argv = args.encode()
+        elif isinstance(args, list):
+            # 'args' is a list of strings and each string contains a module argument.
+            # In this way, GMT can correctly handle option arguments with whitespaces or
+            # quotation marks. This is the preferred way to pass arguments to the GMT
+            # API and is used for PyGMT >= v0.12.0.
+            mode = len(args)  # 'mode' is the number of arguments.
+            # Pass a null pointer if no arguments are specified.
+            argv = strings_to_ctypes_array(args) if mode != 0 else None
+        else:
+            raise GMTInvalidInput(
+                "'args' must be either a string or a list of strings."
+            )
+
+        status = c_call_module(self.session_pointer, module.encode(), mode, argv)
+        if status != 0:
+            raise GMTCLibError(
+                f"Module '{module}' failed with status code {status}:\n{self._error_message}"
+            )
 
     def create_data(
         self,
@@ -1627,3 +1870,436 @@ class Session:
             required_z=required_z,
             required_data=required_data,
         )
+
+    @contextlib.contextmanager
+    def virtualfile_out(
+        self,
+        kind: Literal["dataset", "grid", "image"] = "dataset",
+        fname: str | None = None,
+    ) -> Generator[str, None, None]:
+        r"""
+        Create a virtual file or an actual file for storing output data.
+
+        If ``fname`` is not given, a virtual file will be created to store the output
+        data into a GMT data container and the function yields the name of the virtual
+        file. Otherwise, the output data will be written into the specified file and the
+        function simply yields the actual file name.
+
+        Parameters
+        ----------
+        kind
+            The data kind of the virtual file to create. Valid values are ``"dataset"``,
+            ``"grid"``, and ``"image"``. Ignored if ``fname`` is specified.
+        fname
+            The name of the actual file to write the output data. No virtual file will
+            be created.
+
+        Yields
+        ------
+        vfile
+            Name of the virtual file or the actual file.
+
+        Examples
+        --------
+        >>> from pathlib import Path
+        >>> from pygmt.clib import Session
+        >>> from pygmt.datatypes import _GMT_DATASET
+        >>> from pygmt.helpers import GMTTempFile
+        >>>
+        >>> with GMTTempFile(suffix=".txt") as tmpfile:
+        ...     with Path(tmpfile.name).open(mode="w") as fp:
+        ...         print("1.0 2.0 3.0 TEXT", file=fp)
+        ...
+        ...     # Create a virtual file for storing the output table.
+        ...     with Session() as lib:
+        ...         with lib.virtualfile_out(kind="dataset") as vouttbl:
+        ...             lib.call_module("read", [tmpfile.name, vouttbl, "-Td"])
+        ...             ds = lib.read_virtualfile(vouttbl, kind="dataset")
+        ...             assert isinstance(ds.contents, _GMT_DATASET)
+        ...
+        ...     # Write data to an actual file without creating a virtual file.
+        ...     with Session() as lib:
+        ...         with lib.virtualfile_out(fname=tmpfile.name) as vouttbl:
+        ...             assert vouttbl == tmpfile.name
+        ...             lib.call_module("read", [tmpfile.name, vouttbl, "-Td"])
+        ...         line = Path(vouttbl).read_text()
+        ...         assert line == "1\t2\t3\tTEXT\n"
+        """
+        if fname is not None:  # Yield the actual file name.
+            yield fname
+        else:  # Create a virtual file for storing the output data.
+            # Determine the family and geometry from kind
+            family, geometry = {
+                "dataset": ("GMT_IS_DATASET", "GMT_IS_PLP"),
+                "grid": ("GMT_IS_GRID", "GMT_IS_SURFACE"),
+                "image": ("GMT_IS_IMAGE", "GMT_IS_SURFACE"),
+            }[kind]
+            direction = "GMT_OUT|GMT_IS_REFERENCE" if kind == "image" else "GMT_OUT"
+            with self.open_virtualfile(family, geometry, direction, None) as vfile:
+                yield vfile
+
+    def inquire_virtualfile(self, vfname: str) -> int:
+        """
+        Get the family of a virtual file.
+
+        Parameters
+        ----------
+        vfname
+            Name of the virtual file to inquire.
+
+        Returns
+        -------
+        family
+            The integer value for the family of the virtual file.
+
+        Examples
+        --------
+        >>> from pygmt.clib import Session
+        >>> with Session() as lib:
+        ...     with lib.virtualfile_out(kind="dataset") as vfile:
+        ...         family = lib.inquire_virtualfile(vfile)
+        ...         assert family == lib["GMT_IS_DATASET"]
+        """
+        c_inquire_virtualfile = self.get_libgmt_func(
+            "GMT_Inquire_VirtualFile",
+            argtypes=[ctp.c_void_p, ctp.c_char_p],
+            restype=ctp.c_uint,
+        )
+        return c_inquire_virtualfile(self.session_pointer, vfname.encode())
+
+    def read_virtualfile(
+        self,
+        vfname: str,
+        kind: Literal["dataset", "grid", "image", "cube", None] = None,
+    ):
+        """
+        Read data from a virtual file and optionally cast into a GMT data container.
+
+        Parameters
+        ----------
+        vfname
+            Name of the virtual file to read.
+        kind
+            Cast the data into a GMT data container. Valid values are ``"dataset"``,
+            ``"grid"``, ``"image"`` and ``None``. If ``None``, will return a ctypes void
+            pointer.
+
+        Returns
+        -------
+        pointer
+            Pointer to the GMT data container. If ``kind`` is ``None``, returns a ctypes
+            void pointer instead.
+
+        Examples
+        --------
+        >>> from pathlib import Path
+        >>> from pygmt.clib import Session
+        >>> from pygmt.helpers import GMTTempFile
+        >>>
+        >>> # Read dataset from a virtual file
+        >>> with Session() as lib:
+        ...     with GMTTempFile(suffix=".txt") as tmpfile:
+        ...         with Path(tmpfile.name).open(mode="w") as fp:
+        ...             print("1.0 2.0 3.0 TEXT", file=fp)
+        ...         with lib.virtualfile_out(kind="dataset") as vouttbl:
+        ...             lib.call_module("read", [tmpfile.name, vouttbl, "-Td"])
+        ...             # Read the virtual file as a void pointer
+        ...             void_pointer = lib.read_virtualfile(vouttbl)
+        ...             assert isinstance(void_pointer, int)  # void pointer is an int
+        ...             # Read the virtual file as a dataset
+        ...             data_pointer = lib.read_virtualfile(vouttbl, kind="dataset")
+        ...             assert isinstance(data_pointer, ctp.POINTER(_GMT_DATASET))
+        >>>
+        >>> # Read grid from a virtual file
+        >>> with Session() as lib:
+        ...     with lib.virtualfile_out(kind="grid") as voutgrd:
+        ...         lib.call_module("read", ["@earth_relief_01d_g", voutgrd, "-Tg"])
+        ...         # Read the virtual file as a void pointer
+        ...         void_pointer = lib.read_virtualfile(voutgrd)
+        ...         assert isinstance(void_pointer, int)  # void pointer is an int
+        ...         data_pointer = lib.read_virtualfile(voutgrd, kind="grid")
+        ...         assert isinstance(data_pointer, ctp.POINTER(_GMT_GRID))
+
+        """
+        c_read_virtualfile = self.get_libgmt_func(
+            "GMT_Read_VirtualFile",
+            argtypes=[ctp.c_void_p, ctp.c_char_p],
+            restype=ctp.c_void_p,
+        )
+        pointer = c_read_virtualfile(self.session_pointer, vfname.encode())
+        # The GMT C API function GMT_Read_VirtualFile returns a void pointer. It usually
+        # needs to be cast into a pointer to a GMT data container (e.g., _GMT_GRID or
+        # _GMT_DATASET).
+        if kind is None:  # Return the ctypes void pointer
+            return pointer
+        if kind == "cube":
+            raise NotImplementedError(f"kind={kind} is not supported yet.")
+        dtype = {"dataset": _GMT_DATASET, "grid": _GMT_GRID, "image": _GMT_IMAGE}[kind]
+        return ctp.cast(pointer, ctp.POINTER(dtype))
+
+    def virtualfile_to_dataset(
+        self,
+        vfname: str,
+        output_type: Literal["pandas", "numpy", "file", "strings"] = "pandas",
+        header: int | None = None,
+        column_names: list[str] | None = None,
+        dtype: type | dict[str, type] | None = None,
+        index_col: str | int | None = None,
+    ) -> pd.DataFrame | np.ndarray | None:
+        """
+        Output a tabular dataset stored in a virtual file to a different format.
+
+        The format of the dataset is determined by the ``output_type`` parameter.
+
+        Parameters
+        ----------
+        vfname
+            The virtual file name that stores the result data.
+        output_type
+            Desired output type of the result data.
+
+            - ``"pandas"`` will return a :class:`pandas.DataFrame` object.
+            - ``"numpy"`` will return a :class:`numpy.ndarray` object.
+            - ``"file"`` means the result was saved to a file and will return ``None``.
+            - ``"strings"`` will return the trailing text only as an array of strings.
+        header
+            Row number containing column names for the :class:`pandas.DataFrame` output.
+            ``header=None`` means not to parse the column names from table header.
+            Ignored if the row number is larger than the number of headers in the table.
+        column_names
+            The column names for the :class:`pandas.DataFrame` output.
+        dtype
+            Data type for the columns of the :class:`pandas.DataFrame` output. Can be a
+            single type for all columns or a dictionary mapping column names to types.
+        index_col
+            Column to set as the index of the :class:`pandas.DataFrame` output.
+
+        Returns
+        -------
+        result
+            The result dataset. If ``output_type="file"`` returns ``None``.
+
+        Examples
+        --------
+        >>> from pathlib import Path
+        >>> import numpy as np
+        >>> import pandas as pd
+        >>>
+        >>> from pygmt.helpers import GMTTempFile
+        >>> from pygmt.clib import Session
+        >>>
+        >>> with GMTTempFile(suffix=".txt") as tmpfile:
+        ...     # prepare the sample data file
+        ...     with Path(tmpfile.name).open(mode="w") as fp:
+        ...         print(">", file=fp)
+        ...         print("1.0 2.0 3.0 TEXT1 TEXT23", file=fp)
+        ...         print("4.0 5.0 6.0 TEXT4 TEXT567", file=fp)
+        ...         print(">", file=fp)
+        ...         print("7.0 8.0 9.0 TEXT8 TEXT90", file=fp)
+        ...         print("10.0 11.0 12.0 TEXT123 TEXT456789", file=fp)
+        ...
+        ...     # file output
+        ...     with Session() as lib:
+        ...         with GMTTempFile(suffix=".txt") as outtmp:
+        ...             with lib.virtualfile_out(
+        ...                 kind="dataset", fname=outtmp.name
+        ...             ) as vouttbl:
+        ...                 lib.call_module("read", [tmpfile.name, vouttbl, "-Td"])
+        ...                 result = lib.virtualfile_to_dataset(
+        ...                     vfname=vouttbl, output_type="file"
+        ...                 )
+        ...                 assert result is None
+        ...                 assert Path(outtmp.name).stat().st_size > 0
+        ...
+        ...     # strings, numpy and pandas outputs
+        ...     with Session() as lib:
+        ...         with lib.virtualfile_out(kind="dataset") as vouttbl:
+        ...             lib.call_module("read", [tmpfile.name, vouttbl, "-Td"])
+        ...
+        ...             # strings output
+        ...             outstr = lib.virtualfile_to_dataset(
+        ...                 vfname=vouttbl, output_type="strings"
+        ...             )
+        ...             assert isinstance(outstr, np.ndarray)
+        ...             assert outstr.dtype.kind in ("S", "U")
+        ...
+        ...             # numpy output
+        ...             outnp = lib.virtualfile_to_dataset(
+        ...                 vfname=vouttbl, output_type="numpy"
+        ...             )
+        ...             assert isinstance(outnp, np.ndarray)
+        ...
+        ...             # pandas output
+        ...             outpd = lib.virtualfile_to_dataset(
+        ...                 vfname=vouttbl, output_type="pandas"
+        ...             )
+        ...             assert isinstance(outpd, pd.DataFrame)
+        ...
+        ...             # pandas output with specified column names
+        ...             outpd2 = lib.virtualfile_to_dataset(
+        ...                 vfname=vouttbl,
+        ...                 output_type="pandas",
+        ...                 column_names=["col1", "col2", "col3", "coltext"],
+        ...             )
+        ...             assert isinstance(outpd2, pd.DataFrame)
+        >>> outstr
+        array(['TEXT1 TEXT23', 'TEXT4 TEXT567', 'TEXT8 TEXT90',
+           'TEXT123 TEXT456789'], dtype='<U18')
+        >>> outnp
+        array([[1.0, 2.0, 3.0, 'TEXT1 TEXT23'],
+               [4.0, 5.0, 6.0, 'TEXT4 TEXT567'],
+               [7.0, 8.0, 9.0, 'TEXT8 TEXT90'],
+               [10.0, 11.0, 12.0, 'TEXT123 TEXT456789']], dtype=object)
+        >>> outpd
+              0     1     2                   3
+        0   1.0   2.0   3.0        TEXT1 TEXT23
+        1   4.0   5.0   6.0       TEXT4 TEXT567
+        2   7.0   8.0   9.0        TEXT8 TEXT90
+        3  10.0  11.0  12.0  TEXT123 TEXT456789
+        >>> outpd2
+           col1  col2  col3             coltext
+        0   1.0   2.0   3.0        TEXT1 TEXT23
+        1   4.0   5.0   6.0       TEXT4 TEXT567
+        2   7.0   8.0   9.0        TEXT8 TEXT90
+        3  10.0  11.0  12.0  TEXT123 TEXT456789
+        """
+        if output_type == "file":  # Already written to file, so return None
+            return None
+
+        # Read the virtual file as a _GMT_DATASET object
+        result = self.read_virtualfile(vfname, kind="dataset").contents
+
+        if output_type == "strings":  # strings output
+            return result.to_strings()
+
+        result = result.to_dataframe(
+            header=header, column_names=column_names, dtype=dtype, index_col=index_col
+        )
+        if output_type == "numpy":  # numpy.ndarray output
+            return result.to_numpy()
+        return result  # pandas.DataFrame output
+
+    def virtualfile_to_raster(
+        self,
+        vfname: str,
+        kind: Literal["grid", "image", "cube", None] = "grid",
+        outgrid: str | None = None,
+    ) -> xr.DataArray | None:
+        """
+        Output raster data stored in a virtual file to an :class:`xarray.DataArray`
+        object.
+
+        The raster data can be a grid, an image or a cube.
+
+        Parameters
+        ----------
+        vfname
+            The virtual file name that stores the result grid/image/cube.
+        kind
+            Type of the raster data. Valid values are ``"grid"``, ``"image"``,
+            ``"cube"`` or ``None``. If ``None``, will inquire the data type from the
+            virtual file name.
+        outgrid
+            Name of the output grid/image/cube. If specified, it means the raster data
+            was already saved into an actual file and will return ``None``.
+
+        Returns
+        -------
+        result
+            The result grid/image/cube. If ``outgrid`` is specified, return ``None``.
+
+        Examples
+        --------
+        >>> from pathlib import Path
+        >>> from pygmt.clib import Session
+        >>> from pygmt.helpers import GMTTempFile
+        >>> with Session() as lib:
+        ...     # file output
+        ...     with GMTTempFile(suffix=".nc") as tmpfile:
+        ...         outgrid = tmpfile.name
+        ...         with lib.virtualfile_out(kind="grid", fname=outgrid) as voutgrd:
+        ...             lib.call_module("read", ["@earth_relief_01d_g", voutgrd, "-Tg"])
+        ...             result = lib.virtualfile_to_raster(
+        ...                 vfname=voutgrd, outgrid=outgrid
+        ...             )
+        ...             assert result == None
+        ...             assert Path(outgrid).stat().st_size > 0
+        ...
+        ...     # xarray.DataArray output
+        ...     outgrid = None
+        ...     with lib.virtualfile_out(kind="grid", fname=outgrid) as voutgrd:
+        ...         lib.call_module("read", ["@earth_relief_01d_g", voutgrd, "-Tg"])
+        ...         result = lib.virtualfile_to_raster(vfname=voutgrd, outgrid=outgrid)
+        ...         assert isinstance(result, xr.DataArray)
+        """
+        if outgrid is not None:  # Already written to file, so return None
+            return None
+        if kind is None:  # Inquire the data family from the virtualfile
+            family = self.inquire_virtualfile(vfname)
+            kind = {  # type: ignore[assignment]
+                self["GMT_IS_GRID"]: "grid",
+                self["GMT_IS_IMAGE"]: "image",
+                self["GMT_IS_CUBE"]: "cube",
+            }[family]
+        return self.read_virtualfile(vfname, kind=kind).contents.to_dataarray()
+
+    def extract_region(self) -> np.ndarray:
+        """
+        Extract the region of the currently active figure.
+
+        Retrieves the information from the PostScript file, so it works for country
+        codes as well.
+
+        Returns
+        -------
+        region
+            A numpy 1-D array with the west, east, south, and north dimensions of the
+            current figure.
+
+        Examples
+        --------
+        >>> import pygmt
+        >>> fig = pygmt.Figure()
+        >>> fig.coast(
+        ...     region=[0, 10, -20, -10], projection="M12c", frame=True, land="black"
+        ... )
+        >>> with Session() as lib:
+        ...     region = lib.extract_region()
+        >>> print(", ".join([f"{x:.2f}" for x in region]))
+        0.00, 10.00, -20.00, -10.00
+
+        Using ISO country codes for the regions (for example ``"US.HI"`` for Hawaiʻi):
+
+        >>> fig = pygmt.Figure()
+        >>> fig.coast(region="US.HI", projection="M12c", frame=True, land="black")
+        >>> with Session() as lib:
+        ...     region = lib.extract_region()
+        >>> print(", ".join([f"{x:.2f}" for x in region]))
+        -164.71, -154.81, 18.91, 23.58
+
+        The country codes can have an extra argument that rounds the region to multiples
+        of the argument (for example, ``"US.HI+r5"`` will round the region to multiples
+        of 5):
+
+        >>> fig = pygmt.Figure()
+        >>> fig.coast(region="US.HI+r5", projection="M12c", frame=True, land="black")
+        >>> with Session() as lib:
+        ...     region = lib.extract_region()
+        >>> print(", ".join([f"{x:.2f}" for x in region]))
+        -165.00, -150.00, 15.00, 25.00
+        """  # noqa: RUF002
+        c_extract_region = self.get_libgmt_func(
+            "GMT_Extract_Region",
+            argtypes=[ctp.c_void_p, ctp.c_char_p, ctp.POINTER(ctp.c_double)],
+            restype=ctp.c_int,
+        )
+
+        region = np.empty(4, dtype=np.float64)
+        status = c_extract_region(
+            self.session_pointer,
+            None,  # File pointer to a PostScript file. Must be None in modern mode.
+            region.ctypes.data_as(ctp.POINTER(ctp.c_double)),
+        )
+        if status != 0:
+            raise GMTCLibError("Failed to extract region from current figure.")
+        return region
