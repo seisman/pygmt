@@ -237,43 +237,6 @@ class Session:
             GMT_CONSTANTS[name] = self.get_enum(name)
         return GMT_CONSTANTS[name]
 
-    def get_enum(self, name: str) -> int:
-        """
-        Get the value of a GMT constant (C enum) from ``gmt_resources.h``.
-
-        Used to set configuration values for other API calls. Wraps ``GMT_Get_Enum``.
-
-        Parameters
-        ----------
-        name
-            The name of the constant (e.g., ``"GMT_SESSION_EXTERNAL"``).
-
-        Returns
-        -------
-        value
-            Integer value of the constant. Do not rely on this value because it might
-            change.
-
-        Raises
-        ------
-        GMTCLibError
-            If the constant doesn't exist.
-        """
-        c_get_enum = self.get_libgmt_func(
-            "GMT_Get_Enum", argtypes=[ctp.c_void_p, ctp.c_char_p], restype=ctp.c_int
-        )
-
-        # The C library introduced the void API pointer to GMT_Get_Enum so that it's
-        # consistent with other functions. It doesn't use the pointer so we can pass
-        # in None (NULL pointer). We can't give it the actual pointer because we need
-        # to call GMT_Get_Enum when creating a new API session pointer (chicken-and-egg
-        # type of thing).
-        session = None
-        value = c_get_enum(session, name.encode())
-        if value is None or value == -99999:
-            raise GMTCLibError(f"Constant '{name}' doesn't exist in libgmt.")
-        return value
-
     def get_libgmt_func(self, name, argtypes=None, restype=None):
         """
         Get a ctypes function from the libgmt shared library.
