@@ -150,51 +150,6 @@ class Session:
     -55 -47 -24 -10 190 981 1 1 8 14 1 1
     """
 
-    @property
-    def session_pointer(self) -> ctp.c_void_p:
-        """
-        The :class:`ctypes.c_void_p` pointer to the current open GMT session.
-
-        Raises
-        ------
-        GMTCLibNoSessionError
-            If trying to access without a currently open GMT session (i.e., outside of
-            the context manager).
-        """
-        if not hasattr(self, "_session_pointer") or self._session_pointer is None:
-            raise GMTCLibNoSessionError("No currently open GMT API session.")
-        return self._session_pointer
-
-    @session_pointer.setter
-    def session_pointer(self, session: ctp.c_void_p):
-        """
-        Set the session void pointer.
-        """
-        self._session_pointer = session
-
-    @property
-    def info(self) -> dict[str, str]:
-        """
-        Dictionary with the GMT version and default paths and parameters.
-        """
-        if not hasattr(self, "_info"):
-            self._info = {
-                "version": self.get_default("API_VERSION"),
-                "padding": self.get_default("API_PAD"),
-                # API_BINDIR points to the directory of the Python interpreter
-                # "binary dir": self.get_default("API_BINDIR"),
-                "share dir": self.get_default("API_SHAREDIR"),
-                # This segfaults for some reason
-                # 'data dir': self.get_default("API_DATADIR"),
-                "plugin dir": self.get_default("API_PLUGINDIR"),
-                "library path": self.get_default("API_LIBRARY"),
-                "cores": self.get_default("API_CORES"),
-                "grid layout": self.get_default("API_GRID_LAYOUT"),
-                "image layout": self.get_default("API_IMAGE_LAYOUT"),
-                "binary version": self.get_default("API_BIN_VERSION"),
-            }
-        return self._info
-
     def __enter__(self):
         """
         Create a GMT API session.
@@ -211,25 +166,6 @@ class Session:
         Calls :meth:`pygmt.clib.Session.destroy`.
         """
         self.destroy()
-
-    def __getitem__(self, name: str) -> int:
-        """
-        Get the value of a GMT constant.
-
-        Parameters
-        ----------
-        name
-            The name of the constant (e.g., ``"GMT_SESSION_EXTERNAL"``).
-
-        Returns
-        -------
-        value
-            Integer value of the constant. Do not rely on this value because it might
-            change.
-        """
-        if name not in GMT_CONSTANTS:
-            GMT_CONSTANTS[name] = self.get_enum(name)
-        return GMT_CONSTANTS[name]
 
     def get_libgmt_func(self, name, argtypes=None, restype=None):
         """
