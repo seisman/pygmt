@@ -149,69 +149,6 @@ class Session:
     -55 -47 -24 -10 190 981 1 1 8 14 1 1
     """
 
-    def __enter__(self):
-        """
-        Create a GMT API session.
-
-        Calls :meth:`pygmt.clib.Session.create`.
-        """
-        self.create("pygmt-session")
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        """
-        Destroy the currently open GMT API session.
-
-        Calls :meth:`pygmt.clib.Session.destroy`.
-        """
-        self.destroy()
-
-    def get_libgmt_func(
-        self, name: str, argtypes: list | None = None, restype=None
-    ) -> Callable:
-        """
-        Get a ctypes function from the libgmt shared library.
-
-        Assigns the argument and return type conversions for the function.
-
-        Use this method to access a C function from libgmt.
-
-        Parameters
-        ----------
-        name
-            The name of the GMT API function.
-        argtypes
-            List of ctypes types used to convert the Python input arguments for the API
-            function.
-        restype : ctypes type
-            The ctypes type used to convert the input returned by the function into a
-            Python type.
-
-        Returns
-        -------
-        function
-            The GMT API function.
-
-        Examples
-        --------
-
-        >>> from ctypes import c_void_p, c_int
-        >>> with Session() as lib:
-        ...     func = lib.get_libgmt_func(
-        ...         "GMT_Destroy_Session", argtypes=[c_void_p], restype=c_int
-        ...     )
-        >>> type(func)
-        <class 'ctypes.CDLL.__init__.<locals>._FuncPtr'>
-        """
-        if not hasattr(self, "_libgmt"):
-            self._libgmt = _libgmt
-        function = getattr(self._libgmt, name)
-        if argtypes is not None:
-            function.argtypes = argtypes
-        if restype is not None:
-            function.restype = restype
-        return function
-
     def create(self, name: str):
         """
         Create a new GMT C API session.
@@ -306,37 +243,6 @@ class Session:
         if hasattr(self, "_error_log"):
             msg = "\n".join(line for line in self._error_log if "[ERROR]" in line)
         return msg
-
-    def destroy(self):
-        """
-        Destroy the currently open GMT API session.
-
-        .. warning::
-
-            Usage of :class:`pygmt.clib.Session` as a context manager in a ``with``
-            block is preferred over calling :meth:`pygmt.clib.Session.create` and
-            :meth:`pygmt.clib.Session.destroy` manually.
-
-        Calls ``GMT_Destroy_Session`` to terminate and free the memory of a registered
-        ``GMTAPI_CTRL`` session (the pointer for this struct is stored in the
-        ``session_pointer`` attribute).
-
-        Always use this method after you are done using a C API session. The session
-        needs to be destroyed before creating a new one. Otherwise, some of the
-        configuration files might be left behind and can influence subsequent API calls.
-
-        Sets the ``session_pointer`` attribute to ``None``.
-        """
-        c_destroy_session = self.get_libgmt_func(
-            "GMT_Destroy_Session", argtypes=[ctp.c_void_p], restype=ctp.c_int
-        )
-
-        status = c_destroy_session(self.session_pointer)
-        if status:
-            msg = f"Failed to destroy GMT API session:\n{self._error_message}"
-            raise GMTCLibError(msg)
-
-        self.session_pointer = None
 
     def create_data(
         self,
