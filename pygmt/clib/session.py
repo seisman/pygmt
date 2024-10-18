@@ -101,54 +101,6 @@ __gmt_version__ = get_gmt_version(_libgmt)
 
 
 class Session:
-    """
-    A GMT API session where most operations involving the C API happen.
-
-    Works as a context manager (for use in a ``with`` block) to create a GMT C API
-    session and destroy it in the end to clean up memory.
-
-    Functions of the shared library are exposed as methods of this class. Most methods
-    MUST be used with an open session (inside a ``with`` block). If creating GMT data
-    structures to communicate data, put that code inside the same ``with`` block as the
-    API calls that will use the data.
-
-    By default, will let :mod:`ctypes` try to find the GMT shared library (``libgmt``).
-    If the environment variable :term:`GMT_LIBRARY_PATH` is set, will look for the
-    shared library in the directory specified by it.
-
-    The ``session_pointer`` attribute holds a ctypes pointer to the currently open
-    session.
-
-    Raises
-    ------
-    GMTCLibNotFoundError
-        If there was any problem loading the library (couldn't find it or couldn't
-        access the functions).
-    GMTCLibNoSessionError
-        If you try to call a method outside of a ``with`` block.
-
-    Examples
-    --------
-
-    >>> from pygmt.helpers.testing import load_static_earth_relief
-    >>> from pygmt.helpers import GMTTempFile
-    >>> grid = load_static_earth_relief()
-    >>> type(grid)
-    <class 'xarray.core.dataarray.DataArray'>
-    >>> # Create a session and destroy it automatically when exiting the "with" block.
-    >>> with Session() as lib:
-    ...     # Create a virtual file and link to the memory block of the grid.
-    ...     with lib.virtualfile_from_grid(grid) as fin:
-    ...         # Create a temp file to use as output.
-    ...         with GMTTempFile() as fout:
-    ...             # Call the grdinfo module with the virtual file as input and the
-    ...             # temp file as output.
-    ...             lib.call_module("grdinfo", [fin, "-C", f"->{fout.name}"])
-    ...             # Read the contents of the temp file before it's deleted.
-    ...             print(fout.read().strip())
-    -55 -47 -24 -10 190 981 1 1 8 14 1 1
-    """
-
     def create_data(
         self,
         family,
