@@ -3,9 +3,7 @@ Define the Figure class that handles all plotting.
 """
 
 import base64
-import os
 from pathlib import Path, PurePath
-from tempfile import TemporaryDirectory
 from typing import Literal
 
 try:
@@ -15,12 +13,8 @@ try:
 except ImportError:
     _HAS_IPYTHON = False
 
-import numpy as np
-from pygmt.clib import Session
 from pygmt.exceptions import GMTError, GMTInvalidInput
-from pygmt.helpers import launch_external_viewer, unique_name
-
-
+from pygmt.helpers import launch_external_viewer
 
 # A registry of all figures that have had "show" called in this session.
 # This is needed for the sphinx-gallery scraper in pygmt/sphinx_gallery.py
@@ -326,52 +320,3 @@ class Figure:
         velo,
         wiggle,
     )
-
-
-def set_display(method: Literal["external", "notebook", "none", None] = None):
-    """
-    Set the display method when calling :meth:`pygmt.Figure.show`.
-
-    Parameters
-    ----------
-    method
-        The method to display an image preview. Choose from:
-
-        - ``"external"``: External PDF preview using the default PDF viewer
-        - ``"notebook"``: Inline PNG preview in the current notebook
-        - ``"none"``: Disable image preview
-        - ``None``: Reset to the default display method, which is either ``"external"``
-          in Python consoles or ``"notebook"`` in Jupyter notebooks.
-
-    Examples
-    --------
-    Let's assume that you're using a Jupyter Notebook:
-
-    >>> import pygmt
-    >>> fig = pygmt.Figure()
-    >>> fig.basemap(region=[0, 10, 0, 10], projection="X10c/5c", frame=True)
-    >>> fig.show()  # Will display a PNG image in the current notebook
-    >>>
-    >>> # Set the display method to "external"
-    >>> pygmt.set_display(method="external")  # doctest: +SKIP
-    >>> fig.show()  # Will display a PDF image using the default PDF viewer
-    >>>
-    >>> # Set the display method to "none"
-    >>> pygmt.set_display(method="none")
-    >>> fig.show()  # Will not show any image
-    >>>
-    >>> # Reset to the default display method
-    >>> pygmt.set_display(method=None)
-    >>> fig.show()  # Again, will show a PNG image in the current notebook
-    """
-    match method:
-        case "external" | "notebook" | "none":
-            SHOW_CONFIG["method"] = method
-        case None:
-            SHOW_CONFIG["method"] = _get_default_display_method()
-        case _:
-            msg = (
-                f"Invalid display method '{method}'. "
-                "Valid values are 'external', 'notebook', 'none' or None."
-            )
-            raise GMTInvalidInput(msg)

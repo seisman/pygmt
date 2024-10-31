@@ -6,14 +6,11 @@ Doesn't include the plotting commands which have their own test files.
 
 import importlib
 from pathlib import Path
-from unittest.mock import Mock, patch
 
-import numpy as np
 import numpy.testing as npt
 import pytest
-from pygmt import Figure, set_display
+from pygmt import Figure
 from pygmt.exceptions import GMTError, GMTInvalidInput
-from pygmt.figure import SHOW_CONFIG, _get_default_display_method
 from pygmt.helpers import GMTTempFile
 
 _HAS_IPYTHON = bool(importlib.util.find_spec("IPython"))
@@ -329,70 +326,6 @@ def test_figure_display_external():
     fig = Figure()
     fig.basemap(region=[0, 3, 6, 9], projection="X1c", frame=True)
     fig.show(method="external")
-
-
-class TestSetDisplay:
-    """
-    Test the pygmt.set_display method.
-    """
-
-    def test_set_display(self):
-        """
-        Test if pygmt.set_display updates the SHOW_CONFIG variable correctly and
-        Figure.show opens the preview image in the correct way.
-        """
-        default_method = SHOW_CONFIG["method"]  # Store the current default method.
-
-        fig = Figure()
-        fig.basemap(region=[0, 3, 6, 9], projection="X1c", frame=True)
-
-        # Test the "notebook" display method.
-        set_display(method="notebook")
-        assert SHOW_CONFIG["method"] == "notebook"
-        if _HAS_IPYTHON:
-            with (
-                patch("IPython.display.display") as mock_display,
-                patch("pygmt.figure.launch_external_viewer") as mock_viewer,
-            ):
-                fig.show()
-                assert mock_viewer.call_count == 0
-                assert mock_display.call_count == 1
-        else:
-            with pytest.raises(GMTError):
-                fig.show()
-
-        # Test the "external" display method
-        set_display(method="external")
-        assert SHOW_CONFIG["method"] == "external"
-        with patch("pygmt.figure.launch_external_viewer") as mock_viewer:
-            fig.show()
-            assert mock_viewer.call_count == 1
-        if _HAS_IPYTHON:
-            with patch("IPython.display.display") as mock_display:
-                fig.show()
-                assert mock_display.call_count == 0
-
-        # Test the "none" display method.
-        set_display(method="none")
-        assert SHOW_CONFIG["method"] == "none"
-        with patch("pygmt.figure.launch_external_viewer") as mock_viewer:
-            fig.show()
-            assert mock_viewer.call_count == 0
-        if _HAS_IPYTHON:
-            with patch("IPython.display.display") as mock_display:
-                fig.show()
-                assert mock_display.call_count == 0
-
-        # Setting method to None should revert it to the default method.
-        set_display(method=None)
-        assert SHOW_CONFIG["method"] == default_method
-
-    def test_invalid_method(self):
-        """
-        Test if an error is raised when an invalid method is passed.
-        """
-        with pytest.raises(GMTInvalidInput):
-            set_display(method="invalid")
 
 
 def test_figure_unsupported_xshift_yshift():
