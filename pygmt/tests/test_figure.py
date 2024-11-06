@@ -82,7 +82,7 @@ def test_figure_show_notebook_error_without_ipython():
     """
     fig = Figure()
     fig.basemap(region=[0, 1, 2, 3], frame=True)
-    with pytest.raises(GMTError):
+    with pytest.raises(ImportError):
         fig.show(method="notebook")
 
 
