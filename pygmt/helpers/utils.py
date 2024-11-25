@@ -144,56 +144,6 @@ def _validate_data_input(
                     raise GMTInvalidInput(msg)
 
 
-def _check_encoding(argstr: str) -> Encoding:
-    """
-    Check the charset encoding of a string.
-
-    All characters in the string must be in the same charset encoding, otherwise the
-    default ``ISOLatin1+`` encoding is returned. Characters in the Adobe Symbol and
-    ZapfDingbats encodings are also checked because they're independent on the choice of
-    encodings.
-
-    Parameters
-    ----------
-    argstr
-        The string to be checked.
-
-    Returns
-    -------
-    encoding
-        The encoding of the string.
-
-    Examples
-    --------
-    >>> _check_encoding("123ABC+-?!")  # ASCII characters only
-    'ascii'
-    >>> _check_encoding("12AB±β①②")  # Characters in ISOLatin1+
-    'ISOLatin1+'
-    >>> _check_encoding("12ABāáâãäåβ①②")  # Characters in ISO-8859-4
-    'ISO-8859-4'
-    >>> _check_encoding("12ABŒā")  # Mix characters in ISOLatin1+ (Œ) and ISO-8859-4 (ā)
-    'ISOLatin1+'
-    >>> _check_encoding("123AB中文")  # Characters not in any charset encoding
-    'ISOLatin1+'
-    """
-    # Return "ascii" if the string only contains ASCII characters.
-    if all(32 <= ord(c) <= 126 for c in argstr):
-        return "ascii"
-    # Loop through all supported encodings and check if all characters in the string
-    # are in the charset of the encoding. If all characters are in the charset, return
-    # the encoding. The ISOLatin1+ encoding is checked first because it is the default
-    # and most common encoding.
-    adobe_chars = set(charset["Symbol"].values()) | set(
-        charset["ZapfDingbats"].values()
-    )
-    for encoding in ["ISOLatin1+"] + [f"ISO-8859-{i}" for i in range(1, 17) if i != 12]:
-        if all(c in (set(charset[encoding].values()) | adobe_chars) for c in argstr):
-            return encoding  # type: ignore[return-value]
-    # Return the "ISOLatin1+" encoding if the string contains characters from multiple
-    # charset encodings or contains characters that are not in any charset encoding.
-    return "ISOLatin1+"
-
-
 def data_kind(
     data: Any, required: bool = True
 ) -> Literal[
@@ -337,59 +287,6 @@ def data_kind(
         case _:  # Fall back to "vectors" if data is None and required=True.
             kind = "vectors"
     return kind  # type: ignore[return-value]
-
-
-def non_ascii_to_octal(argstr: str, encoding: Encoding = "ISOLatin1+") -> str:
-    r"""
-    Translate non-ASCII characters to their corresponding octal codes.
-
-    Currently, only non-ASCII characters in the Adobe ISOLatin1+, Adobe Symbol, Adobe
-    ZapfDingbats, and ISO-8850-x (x can be in 1-11, 13-17) encodings are supported.
-    The Adobe Standard+ encoding is not supported.
-
-    Parameters
-    ----------
-    argstr
-        The string to be translated.
-    encoding
-        The encoding of characters in the string.
-
-    Returns
-    -------
-    translated_argstr
-        The translated string.
-
-    Examples
-    --------
-    >>> non_ascii_to_octal("•‰“”±°ÿ")
-    '\\031\\214\\216\\217\\261\\260\\377'
-    >>> non_ascii_to_octal("αζ∆Ω∑π∇")
-    '@~\\141@~@~\\172@~@~\\104@~@~\\127@~@~\\345@~@~\\160@~@~\\321@~'
-    >>> non_ascii_to_octal("✁❞❡➾")
-    '@%34%\\041@%%@%34%\\176@%%@%34%\\241@%%@%34%\\376@%%'
-    >>> non_ascii_to_octal("ABC ±120° DEF α ♥")
-    'ABC \\261120\\260 DEF @~\\141@~ @%34%\\252@%%'
-    >>> non_ascii_to_octal("12ABāáâãäåβ①②", encoding="ISO-8859-4")
-    '12AB\\340\\341\\342\\343\\344\\345@~\\142@~@%34%\\254@%%@%34%\\255@%%'
-    """  # noqa: RUF002
-    # Return the input string if it only contains ASCII characters.
-    if encoding == "ascii" or all(32 <= ord(c) <= 126 for c in argstr):
-        return argstr
-
-    # Dictionary mapping non-ASCII characters to octal codes
-    mapping: dict = {}
-    # Adobe Symbol charset.
-    mapping.update({c: f"@~\\{i:03o}@~" for i, c in charset["Symbol"].items()})
-    # Adobe ZapfDingbats charset. Font number is 34.
-    mapping.update(
-        {c: f"@%34%\\{i:03o}@%%" for i, c in charset["ZapfDingbats"].items()}
-    )
-    # ISOLatin1+ or ISO-8859-x charset.
-    mapping.update({c: f"\\{i:03o}" for i, c in charset[encoding].items()})
-
-    # Remove any printable characters
-    mapping = {k: v for k, v in mapping.items() if k not in string.printable}
-    return argstr.translate(str.maketrans(mapping))
 
 
 def build_arg_list(  # noqa: PLR0912
