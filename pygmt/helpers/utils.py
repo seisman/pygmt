@@ -18,28 +18,6 @@ import xarray as xr
 from pygmt.encodings import charset
 from pygmt.exceptions import GMTInvalidInput
 
-# Type hints for the list of encodings supported by PyGMT.
-Encoding = Literal[
-    "ascii",
-    "ISOLatin1+",
-    "ISO-8859-1",
-    "ISO-8859-2",
-    "ISO-8859-3",
-    "ISO-8859-4",
-    "ISO-8859-5",
-    "ISO-8859-6",
-    "ISO-8859-7",
-    "ISO-8859-8",
-    "ISO-8859-9",
-    "ISO-8859-10",
-    "ISO-8859-11",
-    "ISO-8859-13",
-    "ISO-8859-14",
-    "ISO-8859-15",
-    "ISO-8859-16",
-]
-
-
 def _validate_data_input(
     data=None, x=None, y=None, z=None, required_z=False, required_data=True, kind=None
 ):
