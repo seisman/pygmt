@@ -113,33 +113,6 @@ def vectors_to_arrays(vectors: Sequence[Any]) -> list[np.ndarray]:
     return [_to_numpy(vector) for vector in vectors]
 
 
-def strings_to_ctypes_array(strings: Sequence[str] | np.ndarray) -> ctp.Array:
-    """
-    Convert a sequence (e.g., a list) of strings or numpy.ndarray of strings into a
-    ctypes array.
-
-    Parameters
-    ----------
-    strings
-        A sequence of strings, or a numpy.ndarray of str dtype.
-
-    Returns
-    -------
-    ctypes_array
-        A ctypes array of strings.
-
-    Examples
-    --------
-    >>> strings = ["first", "second", "third"]
-    >>> ctypes_array = strings_to_ctypes_array(strings)
-    >>> type(ctypes_array)
-    <class 'pygmt.clib.conversion.c_char_p_Array_3'>
-    >>> [s.decode() for s in ctypes_array]
-    ['first', 'second', 'third']
-    """
-    return (ctp.c_char_p * len(strings))(*[s.encode() for s in strings])
-
-
 def array_to_datetime(array: Sequence[Any] | np.ndarray) -> np.ndarray:
     """
     Convert a 1-D datetime array from various types into numpy.datetime64.
