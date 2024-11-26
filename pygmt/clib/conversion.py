@@ -113,59 +113,6 @@ def vectors_to_arrays(vectors: Sequence[Any]) -> list[np.ndarray]:
     return [_to_numpy(vector) for vector in vectors]
 
 
-def sequence_to_ctypes_array(
-    sequence: Sequence[int | float] | np.ndarray | None, ctype, size: int
-) -> ctp.Array | None:
-    """
-    Convert a sequence of numbers into a ctypes array variable.
-
-    If the sequence is ``None``, returns ``None``. Otherwise, returns a ctypes array.
-    The function only works for sequences of numbers. For converting a sequence of
-    strings, use ``strings_to_ctypes_array`` instead.
-
-    Parameters
-    ----------
-    sequence
-        The sequence to convert. If ``None``, returns ``None``. Otherwise, it must be a
-        sequence (e.g., list, tuple, numpy array).
-    ctype
-        The ctypes type of the array (e.g., ``ctypes.c_int``).
-    size
-        The size of the array. If the sequence is smaller than the size, the remaining
-        elements will be filled with zeros. If the sequence is larger than the size, an
-        exception will be raised.
-
-    Returns
-    -------
-    ctypes_array
-        The ctypes array variable.
-
-    Examples
-    --------
-    >>> import ctypes as ctp
-    >>> ctypes_array = sequence_to_ctypes_array([1, 2, 3], ctp.c_long, 3)
-    >>> type(ctypes_array)
-    <class 'pygmt.clib.conversion.c_long_Array_3'>
-    >>> ctypes_array[:]
-    [1, 2, 3]
-    >>> ctypes_array = sequence_to_ctypes_array([1, 2], ctp.c_long, 5)
-    >>> type(ctypes_array)
-    <class 'pygmt.clib.conversion.c_long_Array_5'>
-    >>> ctypes_array[:]
-    [1, 2, 0, 0, 0]
-    >>> ctypes_array = sequence_to_ctypes_array(None, ctp.c_long, 5)
-    >>> print(ctypes_array)
-    None
-    >>> ctypes_array = sequence_to_ctypes_array([1, 2, 3, 4, 5, 6], ctp.c_long, 5)
-    Traceback (most recent call last):
-    ...
-    IndexError: invalid index
-    """
-    if sequence is None:
-        return None
-    return (ctype * size)(*sequence)
-
-
 def strings_to_ctypes_array(strings: Sequence[str] | np.ndarray) -> ctp.Array:
     """
     Convert a sequence (e.g., a list) of strings or numpy.ndarray of strings into a
