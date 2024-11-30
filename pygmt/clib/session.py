@@ -173,7 +173,8 @@ class Session:
             the context manager).
         """
         if getattr(self, "_session_pointer", None) is None:
-            raise GMTCLibNoSessionError("No currently open GMT API session.")
+            msg = "No currently open GMT API session."
+            raise GMTCLibNoSessionError(msg)
         return self._session_pointer
 
     @session_pointer.setter
@@ -241,6 +242,44 @@ class Session:
         if name not in GMT_CONSTANTS:
             GMT_CONSTANTS[name] = self.get_enum(name)
         return GMT_CONSTANTS[name]
+
+    def get_enum(self, name: str) -> int:
+        """
+        Get the value of a GMT constant (C enum) from ``gmt_resources.h``.
+
+        Used to set configuration values for other API calls. Wraps ``GMT_Get_Enum``.
+
+        Parameters
+        ----------
+        name
+            The name of the constant (e.g., ``"GMT_SESSION_EXTERNAL"``).
+
+        Returns
+        -------
+        value
+            Integer value of the constant. Do not rely on this value because it might
+            change.
+
+        Raises
+        ------
+        GMTCLibError
+            If the constant doesn't exist.
+        """
+        c_get_enum = self.get_libgmt_func(
+            "GMT_Get_Enum", argtypes=[ctp.c_void_p, ctp.c_char_p], restype=ctp.c_int
+        )
+
+        # The C library introduced the void API pointer to GMT_Get_Enum so that it's
+        # consistent with other functions. It doesn't use the pointer so we can pass
+        # in None (NULL pointer). We can't give it the actual pointer because we need
+        # to call GMT_Get_Enum when creating a new API session pointer (chicken-and-egg
+        # type of thing).
+        session = None
+        value = c_get_enum(session, name.encode())
+        if value is None or value == -99999:
+            msg = f"Constant '{name}' doesn't exist in libgmt."
+            raise GMTCLibError(msg)
+        return value
 
     def get_libgmt_func(
         self, name: str, argtypes: list | None = None, restype=None
@@ -412,6 +451,210 @@ class Session:
             raise GMTCLibError(msg)
 
         self.session_pointer = None
+
+    def get_default(self, name: str) -> str:
+        """
+        Get the value of a GMT configuration parameter or a GMT API parameter.
+
+        In addition to the long list of GMT configuration parameters, the following API
+        parameter names are also supported:
+
+        * ``"API_VERSION"``: The GMT API version
+        * ``"API_PAD"``: The grid padding setting
+        * ``"API_BINDIR"``: The binary file directory
+        * ``"API_SHAREDIR"``: The share directory
+        * ``"API_DATADIR"``: The data directory
+        * ``"API_PLUGINDIR"``: The plugin directory
+        * ``"API_LIBRARY"``: The core library path
+        * ``"API_CORES"``: The number of cores
+        * ``"API_IMAGE_LAYOUT"``: The image/band layout
+        * ``"API_GRID_LAYOUT"``: The grid layout
+        * ``"API_BIN_VERSION"``: The GMT binary version (with git information)
+
+        Parameters
+        ----------
+        name
+            The name of the GMT configuration parameter (e.g., ``"PROJ_LENGTH_UNIT"``)
+            or a GMT API parameter (e.g., ``"API_VERSION"``).
+
+        Returns
+        -------
+        value
+            The current value for the parameter.
+
+        Raises
+        ------
+        GMTCLibError
+            If the parameter doesn't exist.
+        """
+        c_get_default = self.get_libgmt_func(
+            "GMT_Get_Default",
+            argtypes=[ctp.c_void_p, ctp.c_char_p, ctp.c_char_p],
+            restype=ctp.c_int,
+        )
+
+        # Make a string buffer to get a return value
+        value = ctp.create_string_buffer(4096)
+        status = c_get_default(self.session_pointer, name.encode(), value)
+        if status != 0:
+            msg = f"Error getting value for '{name}' (error code {status})."
+            raise GMTCLibError(msg)
+        return value.value.decode()
+
+    def get_common(self, option: str) -> bool | int | float | np.ndarray:
+        """
+        Inquire if a GMT common option has been set and return its current value if
+        possible.
+
+        Parameters
+        ----------
+        option
+            The GMT common option to check. Valid options are ``"B"``, ``"I"``, ``"J"``,
+            ``"R"``, ``"U"``, ``"V"``, ``"X"``, ``"Y"``, ``"a"``, ``"b"``, ``"f"``,
+            ``"g"``, ``"h"``, ``"i"``, ``"n"``, ``"o"``, ``"p"``, ``"r"``, ``"s"``,
+            ``"t"``, and ``":"``.
+
+        Returns
+        -------
+        value
+            Whether the option was set or its value. If the option was not set, return
+            ``False``. Otherwise, the return value depends on the choice of the option.
+
+            - options ``"B"``, ``"J"``, ``"U"``, ``"g"``, ``"n"``, ``"p"``, and ``"s"``:
+              return ``True`` if set, else ``False`` (bool)
+            - ``"I"``: 2-element array for the increments (float)
+            - ``"R"``: 4-element array for the region (float)
+            - ``"V"``: the verbose level (int)
+            - ``"X"``: the xshift (float)
+            - ``"Y"``: the yshift (float)
+            - ``"a"``: geometry of the dataset (int)
+            - ``"b"``: return 0 if ``-bi`` was set and 1 if ``-bo`` was set (int)
+            - ``"f"``: return 0 if ``-fi`` was set and 1 if ``-fo`` was set (int)
+            - ``"h"``: whether to delete existing header records (int)
+            - ``"i"``: number of input columns (int)
+            - ``"o"``: number of output columns (int)
+            - ``"r"``: registration type (int)
+            - ``"t"``: 2-element array for the transparency (float)
+            - ``":"``: return 0 if ``-:i`` was set and 1 if ``-:o`` was set (int)
+
+        Examples
+        --------
+        >>> with Session() as lib:
+        ...     lib.call_module(
+        ...         "basemap", ["-R0/10/10/15", "-JX5i/2.5i", "-Baf", "-Ve"]
+        ...     )
+        ...     region = lib.get_common("R")
+        ...     projection = lib.get_common("J")
+        ...     timestamp = lib.get_common("U")
+        ...     verbose = lib.get_common("V")
+        ...     lib.call_module("plot", ["-T", "-Xw+1i", "-Yh-1i"])
+        ...     xshift = lib.get_common("X")  # xshift/yshift are in inches
+        ...     yshift = lib.get_common("Y")
+        >>> print(region, projection, timestamp, verbose, xshift, yshift)
+        [ 0. 10. 10. 15.] True False 3 6.0 1.5
+        >>> with Session() as lib:
+        ...     lib.call_module("basemap", ["-R0/10/10/15", "-JX5i/2.5i", "-Baf"])
+        ...     lib.get_common("A")
+        Traceback (most recent call last):
+        ...
+        pygmt.exceptions.GMTInvalidInput: Unknown GMT common option flag 'A'.
+        """
+        if option not in "BIJRUVXYabfghinoprst:":
+            msg = f"Unknown GMT common option flag '{option}'."
+            raise GMTInvalidInput(msg)
+
+        c_get_common = self.get_libgmt_func(
+            "GMT_Get_Common",
+            argtypes=[ctp.c_void_p, ctp.c_uint, ctp.POINTER(ctp.c_double)],
+            restype=ctp.c_int,
+        )
+        value = np.empty(6, np.float64)  # numpy array to store the value of the option
+        status = c_get_common(
+            self.session_pointer,
+            ord(option),
+            value.ctypes.data_as(ctp.POINTER(ctp.c_double)),
+        )
+
+        if status == self["GMT_NOTSET"]:  # GMT_NOTSET (-1) means the option is not set
+            return False
+        if status == 0:  # Option is set and no other value is returned.
+            return True
+
+        # Otherwise, option is set and values are returned.
+        match option:
+            case "I" | "R" | "t":
+                # Option values (in double type) are returned via the 'value' array.
+                # 'status' is number of valid values in the array.
+                return value[:status]
+            case "X" | "Y":  # Only one valid element in the array.
+                return value[0]
+            case _:  # 'status' is the option value (in integer type).
+                return status
+
+    def call_module(self, module: str, args: str | list[str]):
+        """
+        Call a GMT module with the given arguments.
+
+        Wraps ``GMT_Call_Module``.
+
+        The ``GMT_Call_Module`` API function supports passing module arguments in three
+        different ways:
+
+        1. Pass a single string that contains whitespace-separated module arguments.
+        2. Pass a list of strings and each string contains a module argument.
+        3. Pass a list of ``GMT_OPTION`` data structure.
+
+        Both options 1 and 2 are implemented in this function, but option 2 is preferred
+        because it can correctly handle special characters like whitespaces and
+        quotation marks in module arguments.
+
+        Parameters
+        ----------
+        module
+            The GMT module name to be called (``"coast"``, ``"basemap"``, etc).
+        args
+            Module arguments that will be passed to the GMT module. It can be either
+            a single string (e.g., ``"-R0/5/0/10 -JX10c -BWSen+t'My Title'"``) or a list
+            of strings (e.g., ``["-R0/5/0/10", "-JX10c", "-BWSEN+tMy Title"]``).
+
+        Raises
+        ------
+        GMTInvalidInput
+            If the ``args`` argument is not a string or a list of strings.
+        GMTCLibError
+            If the returned status code of the function is non-zero.
+        """
+        c_call_module = self.get_libgmt_func(
+            "GMT_Call_Module",
+            argtypes=[ctp.c_void_p, ctp.c_char_p, ctp.c_int, ctp.c_void_p],
+            restype=ctp.c_int,
+        )
+
+        # 'args' can be (1) a single string or (2) a list of strings.
+        argv: bytes | ctp.Array[ctp.c_char_p] | None
+        if isinstance(args, list):
+            # 'args' is a list of strings and each string contains a module argument.
+            # In this way, GMT can correctly handle option arguments with whitespaces or
+            # quotation marks. This is the preferred way to pass arguments to the GMT
+            # API and is used for PyGMT >= v0.12.0.
+            mode = len(args)  # 'mode' is the number of arguments.
+            # Pass a null pointer if no arguments are specified.
+            argv = strings_to_ctypes_array(args) if mode != 0 else None
+        elif isinstance(args, str):
+            # 'args' is a single string that contains whitespace-separated arguments.
+            # In this way, we need to correctly handle option arguments that contain
+            # whitespaces or quotation marks. It's used in PyGMT <= v0.11.0 but is no
+            # longer recommended.
+            mode = self["GMT_MODULE_CMD"]
+            argv = args.encode()
+        else:
+            msg = "'args' must either be a list of strings (recommended) or a string."
+            raise GMTInvalidInput(msg)
+
+        status = c_call_module(self.session_pointer, module.encode(), mode, argv)
+        if status != 0:
+            msg = f"Module '{module}' failed with status code {status}:\n{self._error_message}"
+            raise GMTCLibError(msg)
 
     def create_data(
         self,
@@ -954,7 +1197,8 @@ class Session:
             data,
         )
         if data_ptr is None:
-            raise GMTCLibError(f"Failed to read dataset from '{infile}'.")
+            msg = f"Failed to read dataset from '{infile}'."
+            raise GMTCLibError(msg)
         return ctp.cast(data_ptr, ctp.POINTER(dtype))
 
     def write_data(self, family, geometry, mode, wesn, output, data):
@@ -1024,7 +1268,8 @@ class Session:
             data,
         )
         if status != 0:
-            raise GMTCLibError(f"Failed to write dataset to '{output}'")
+            msg = f"Failed to write dataset to '{output}'."
+            raise GMTCLibError(msg)
 
     @contextlib.contextmanager
     def open_virtualfile(
@@ -1616,9 +1861,8 @@ class Session:
             elif check_kind == "vector":
                 valid_kinds += ("empty", "matrix", "vectors", "geojson")
             if kind not in valid_kinds:
-                raise GMTInvalidInput(
-                    f"Unrecognized data type for {check_kind}: {type(data)}"
-                )
+                msg = f"Unrecognized data type for {check_kind}: {type(data)}."
+                raise GMTInvalidInput(msg)
 
         # Decide which virtualfile_from_ function to use
         _virtualfile_from = {
@@ -1870,7 +2114,8 @@ class Session:
         if kind is None:  # Return the ctypes void pointer
             return pointer
         if kind == "cube":
-            raise NotImplementedError(f"kind={kind} is not supported yet.")
+            msg = f"kind={kind} is not supported yet."
+            raise NotImplementedError(msg)
         dtype = {"dataset": _GMT_DATASET, "grid": _GMT_GRID, "image": _GMT_IMAGE}[kind]
         return ctp.cast(pointer, ctp.POINTER(dtype))
 
@@ -2138,5 +2383,6 @@ class Session:
             region.ctypes.data_as(ctp.POINTER(ctp.c_double)),
         )
         if status != 0:
-            raise GMTCLibError("Failed to extract region from current figure.")
+            msg = "Failed to extract region from current figure."
+            raise GMTCLibError(msg)
         return region
