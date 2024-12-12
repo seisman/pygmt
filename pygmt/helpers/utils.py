@@ -19,6 +19,28 @@ import xarray as xr
 from pygmt.encodings import charset
 from pygmt.exceptions import GMTInvalidInput
 
+# Type hints for the list of encodings supported by PyGMT.
+Encoding = Literal[
+    "ascii",
+    "ISOLatin1+",
+    "ISO-8859-1",
+    "ISO-8859-2",
+    "ISO-8859-3",
+    "ISO-8859-4",
+    "ISO-8859-5",
+    "ISO-8859-6",
+    "ISO-8859-7",
+    "ISO-8859-8",
+    "ISO-8859-9",
+    "ISO-8859-10",
+    "ISO-8859-11",
+    "ISO-8859-13",
+    "ISO-8859-14",
+    "ISO-8859-15",
+    "ISO-8859-16",
+]
+
+
 def _validate_data_input(
     data=None, x=None, y=None, z=None, required_z=False, required_data=True, kind=None
 ):
@@ -121,6 +143,57 @@ def _validate_data_input(
                     raise GMTInvalidInput(msg)
                 if hasattr(data, "data_vars") and len(data.data_vars) < 3:  # xr.Dataset
                     raise GMTInvalidInput(msg)
+
+
+def _check_encoding(argstr: str) -> Encoding:
+    """
+    Check the charset encoding of a string.
+
+    All characters in the string must be in the same charset encoding, otherwise the
+    default ``ISOLatin1+`` encoding is returned. Characters in the Adobe Symbol and
+    ZapfDingbats encodings are also checked because they're independent on the choice of
+    encodings.
+
+    Parameters
+    ----------
+    argstr
+        The string to be checked.
+
+    Returns
+    -------
+    encoding
+        The encoding of the string.
+
+    Examples
+    --------
+    >>> _check_encoding("123ABC+-?!")  # ASCII characters only
+    'ascii'
+    >>> _check_encoding("12AB±β①②")  # Characters in ISOLatin1+
+    'ISOLatin1+'
+    >>> _check_encoding("12ABāáâãäåβ①②")  # Characters in ISO-8859-4
+    'ISO-8859-4'
+    >>> _check_encoding("12ABŒā")  # Mix characters in ISOLatin1+ (Œ) and ISO-8859-4 (ā)
+    'ISOLatin1+'
+    >>> _check_encoding("123AB中文")  # Characters not in any charset encoding
+    'ISOLatin1+'
+    """
+    # Return "ascii" if the string only contains ASCII characters.
+    if all(32 <= ord(c) <= 126 for c in argstr):
+        return "ascii"
+    # Loop through all supported encodings and check if all characters in the string
+    # are in the charset of the encoding. If all characters are in the charset, return
+    # the encoding. The ISOLatin1+ encoding is checked first because it is the default
+    # and most common encoding.
+    adobe_chars = set(charset["Symbol"].values()) | set(
+        charset["ZapfDingbats"].values()
+    )
+    for encoding in ["ISOLatin1+"] + [f"ISO-8859-{i}" for i in range(1, 17) if i != 12]:
+        chars = set(charset[encoding].values()) | adobe_chars
+        if all(c in chars for c in argstr):
+            return encoding  # type: ignore[return-value]
+    # Return the "ISOLatin1+" encoding if the string contains characters from multiple
+    # charset encodings or contains characters that are not in any charset encoding.
+    return "ISOLatin1+"
 
 
 def data_kind(
@@ -266,6 +339,59 @@ def data_kind(
         case _:  # Fall back to "vectors" if data is None and required=True.
             kind = "vectors"
     return kind  # type: ignore[return-value]
+
+
+def non_ascii_to_octal(argstr: str, encoding: Encoding = "ISOLatin1+") -> str:
+    r"""
+    Translate non-ASCII characters to their corresponding octal codes.
+
+    Currently, only non-ASCII characters in the Adobe ISOLatin1+, Adobe Symbol, Adobe
+    ZapfDingbats, and ISO-8850-x (x can be in 1-11, 13-17) encodings are supported.
+    The Adobe Standard+ encoding is not supported.
+
+    Parameters
+    ----------
+    argstr
+        The string to be translated.
+    encoding
+        The encoding of characters in the string.
+
+    Returns
+    -------
+    translated_argstr
+        The translated string.
+
+    Examples
+    --------
+    >>> non_ascii_to_octal("•‰“”±°ÿ")
+    '\\031\\214\\216\\217\\261\\260\\377'
+    >>> non_ascii_to_octal("αζ∆Ω∑π∇")
+    '@~\\141@~@~\\172@~@~\\104@~@~\\127@~@~\\345@~@~\\160@~@~\\321@~'
+    >>> non_ascii_to_octal("✁❞❡➾")
+    '@%34%\\041@%%@%34%\\176@%%@%34%\\241@%%@%34%\\376@%%'
+    >>> non_ascii_to_octal("ABC ±120° DEF α ♥")
+    'ABC \\261120\\260 DEF @~\\141@~ @%34%\\252@%%'
+    >>> non_ascii_to_octal("12ABāáâãäåβ①②", encoding="ISO-8859-4")
+    '12AB\\340\\341\\342\\343\\344\\345@~\\142@~@%34%\\254@%%@%34%\\255@%%'
+    """  # noqa: RUF002
+    # Return the input string if it only contains ASCII characters.
+    if encoding == "ascii" or all(32 <= ord(c) <= 126 for c in argstr):
+        return argstr
+
+    # Dictionary mapping non-ASCII characters to octal codes
+    mapping: dict = {}
+    # Adobe Symbol charset.
+    mapping.update({c: f"@~\\{i:03o}@~" for i, c in charset["Symbol"].items()})
+    # Adobe ZapfDingbats charset. Font number is 34.
+    mapping.update(
+        {c: f"@%34%\\{i:03o}@%%" for i, c in charset["ZapfDingbats"].items()}
+    )
+    # ISOLatin1+ or ISO-8859-x charset.
+    mapping.update({c: f"\\{i:03o}" for i, c in charset[encoding].items()})
+
+    # Remove any printable characters
+    mapping = {k: v for k, v in mapping.items() if k not in string.printable}
+    return argstr.translate(str.maketrans(mapping))
 
 
 def build_arg_list(  # noqa: PLR0912
@@ -424,6 +550,46 @@ def is_nonstr_iter(value):
     True
     """
     return isinstance(value, Iterable) and not isinstance(value, str)
+
+
+def launch_external_viewer(fname: str, waiting: float = 0):
+    """
+    Open a file in an external viewer program.
+
+    Uses the ``xdg-open`` command on Linux/FreeBSD, the ``open`` command on macOS, the
+    associated application on Windows, and the default web browser on other systems.
+
+    Parameters
+    ----------
+    fname
+        The file name of the file (preferably a full path).
+    waiting
+        Wait for a few seconds before exiting the function, to allow the external viewer
+        open the file before it's deleted.
+    """
+    # Redirect stdout and stderr to devnull so that the terminal isn't filled with noise
+    run_args = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+
+    match sys.platform:
+        case name if (
+            (name == "linux" or name.startswith("freebsd"))
+            and (xdgopen := shutil.which("xdg-open"))
+        ):  # Linux/FreeBSD
+            subprocess.run([xdgopen, fname], check=False, **run_args)  # type:ignore[call-overload]
+        case "darwin":  # macOS
+            subprocess.run([shutil.which("open"), fname], check=False, **run_args)  # type:ignore[call-overload]
+        case "win32":  # Windows
+            os.startfile(fname)  # type:ignore[attr-defined] # noqa: S606
+        case _:  # Fall back to the browser if can't recognize the operating system.
+            webbrowser.open_new_tab(f"file://{Path(fname).resolve()}")
+    if waiting > 0:
+        # Preview images will be deleted when a GMT modern-mode session ends, but the
+        # external viewer program may take a few seconds to open the images.
+        # Suspend the execution for a few seconds.
+        time.sleep(waiting)
 
 
 def args_in_kwargs(args, kwargs):
