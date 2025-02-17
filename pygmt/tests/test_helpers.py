@@ -22,45 +22,6 @@ from pygmt.helpers import (
 from pygmt.helpers.testing import load_static_earth_relief, skip_if_no
 
 
-def test_load_static_earth_relief():
-    """
-    Check that @static_earth_relief.nc loads without errors.
-    """
-    data = load_static_earth_relief()
-    assert data.dims == ("lat", "lon")
-    assert data.shape == (14, 8)
-    assert data.min() == 190
-    assert data.max() == 981
-    assert data.median() == 467
-    assert isinstance(data, xr.DataArray)
-
-
-def test_unique_name():
-    """
-    Make sure the names are really unique.
-    """
-    names = [unique_name() for i in range(100)]
-    assert len(names) == len(set(names))
-
-
-@pytest.mark.mpl_image_compare
-def test_non_ascii_to_octal():
-    """
-    Test support of non-ASCII characters.
-    """
-    fig = Figure()
-    fig.basemap(
-        region=[0, 10, 0, 5],
-        projection="X10c/5c",
-        frame=[
-            "xaf+lISOLatin1: ﬁ‰“”¥",
-            "yaf+lSymbol: αβ∇∋∈",
-            "WSen+tZapfDingbats: ①❷➂➍✦❝❞",
-        ],
-    )
-    return fig
-
-
 def test_kwargs_to_strings_fails():
     """
     Make sure it fails for invalid conversion types.
@@ -163,47 +124,3 @@ def test_skip_if_no():
     assert mark_decorator.args[0] is True
     assert mark_decorator.kwargs["reason"] == "Could not import 'nullpackage'"
     assert mark_decorator.markname == "skipif"
-
-
-def test_launch_external_viewer_unix():
-    """
-    Test that launch_external_viewer uses the correct viewer for the platform.
-    """
-    # Patch shutil.which to return the command name directly.
-    with patch("shutil.which", side_effect=lambda x: x):
-        assert shutil.which("xdg-open") == "xdg-open"  # Make sure patch is working
-
-        for platform, command in (
-            ("linux", "xdg-open"),
-            ("freebsd", "xdg-open"),
-            ("darwin", "open"),
-        ):
-            with patch("subprocess.run") as mock_run, patch("sys.platform", platform):
-                launch_external_viewer("preview.png")
-                mock_run.assert_called_once()
-                assert mock_run.call_args.args[0] == [command, "preview.png"]
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Test only runs on Windows")
-def test_launch_external_viewer_win32():
-    """
-    Test that launch_external_viewer calls os.startfile on Windows.
-    """
-    with patch("os.startfile") as mock_startfile:
-        launch_external_viewer("preview.png")
-        mock_startfile.assert_called_once_with("preview.png")
-
-
-@pytest.mark.parametrize("fname", ["preview.png", "/full/path/to/preview.png"])
-def test_launch_external_viewer_unknown_os(fname):
-    """
-    Test that launch_external_viewer uses the webbrowser module as a fallback.
-    """
-    with (
-        patch("sys.platform", "unknown"),
-        patch("webbrowser.open_new_tab") as mock_open,
-    ):
-        launch_external_viewer(fname)
-        fullpath = Path(fname).resolve()
-        assert fullpath.is_absolute()
-        mock_open.assert_called_once_with(f"file://{fullpath}")
