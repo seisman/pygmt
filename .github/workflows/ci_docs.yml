@@ -47,7 +47,6 @@ jobs:
   docs:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    if: github.repository == 'GenericMappingTools/pygmt'
     strategy:
       fail-fast: false
       matrix:
