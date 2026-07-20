@@ -16,7 +16,7 @@ def test_basemap():
     fig = Figure()
     fig.basemap(
         region=[10, 70, -3, 8],
-        projection="X8c/6c",
+        projection="X8c/7c",
         frame=Axis(annot=True, tick=True, grid=True),
     )
     return fig
